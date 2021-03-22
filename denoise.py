@@ -49,7 +49,8 @@ def select_components(pipeline, json):
     elif 'CompCorSeparate' in pipeline: # [Muschelli2014]
         comp_cor = json.columns[json.loc['Mask']=='CSF'].to_list()[:5]
         comp_cor.extend(json.columns[json.loc['Mask']=='WM'].to_list()[:5])
-    return '|'.join(comp_cor)
+    if 'CompCor' in pipeline:
+        return '|'.join(comp_cor)
 
 def build_path(layout, derivatives, pipeline, sub, task, space):
     pattern = 'sub-{subject}_task-{task}_space-{space}_pipeline-{pipeline}_{suffix}.{extension}'
@@ -81,8 +82,8 @@ def get_outliers(df, fd_threshold):
     return df, fd_outliers
 
 def plot_dist(ax, matrix, matrix_clean):
-    sns.distplot(np.hstack(matrix), color='#B62E33', hist=False, ax=ax)
-    sns.distplot(np.hstack(matrix_clean), color='#3C83BC', hist=False, ax=ax)
+    sns.distplot(matrix.flatten(), color='#B62E33', hist=False, ax=ax)
+    sns.distplot(matrix_clean.flatten(), color='#3C83BC', hist=False, ax=ax)
     ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
 
 def plot_connectome(ax, matrix, matrix_clean, sub, task):
@@ -104,13 +105,13 @@ def plot_carpet(ax, preproc, preproc_clean, mask):
 def main():  
 
     pipelines = {'6HMPCompCorSeparateSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+',
-                '6HMPCompCorSeparateSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
-                '24HMPCompCorSeparateSpikeReg': '[rot,trans]_[xyz]|cosine|motion_outlier[0-9]+',
-                '6HMPCompCorCombinedSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+', 
-                '6HMPCompCorCombinedSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$'}
+                 '6HMPCompCorSeparateSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
+                 '24HMPCompCorSeparateSpikeReg': '[rot,trans]_[xyz]|cosine|motion_outlier[0-9]+',
+                 '6HMPCompCorCombinedSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+', 
+                 '6HMPCompCorCombinedSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
+                 '6HMPWMSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+'}
 
     args = get_args()
-
     derivatives = str(args.derivatives)
     pipeline = args.pipeline
     fd_threshold = args.fd_threshold
@@ -162,10 +163,12 @@ def main():
     print(f'group-level summary: pipeline-{pipeline}_report.html')
     denoise = f'{derivatives}/denoise'
     npys, plots = report.find_files(denoise, pipeline)
-    fig, axs = plt.subplots(ncols=2, figsize=(15,2), gridspec_kw={'width_ratios': [1,2]})
+    fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(axs[0])
-    report.plot_summary_dist(axs[1], npys, pipeline)
+    edges = report.plot_summary_dist(axs[1], npys, pipeline)
+    np.save(f'{denoise}/group/pipeline-{pipeline}_connMat.npy', edges)
+    report.compare(denoise, axs[2])
     fig.savefig(f'{denoise}/group/pipeline-{pipeline}_plot.png', dpi=300)
     report.html_report(denoise, pipeline, plots)
     plt.close(fig)
