@@ -14,6 +14,7 @@ from nilearn import plotting
 from nilearn import datasets
 from nilearn import image
 from nilearn.input_data import NiftiLabelsMasker
+from nilearn.input_data import NiftiMasker
 from nilearn.connectome import ConnectivityMeasure
 import warnings
 warnings.filterwarnings('ignore')
@@ -23,7 +24,7 @@ import report
 def get_args():
     parser = argparse.ArgumentParser(description='denoise fMRI data')
     parser.add_argument('derivatives', type=Path, help='path to derivatives, parent directory of fmriprep')
-    parser.add_argument('pipeline', type=str, help='pipelines: <6,24>HMPCompCor<Separate,Combined>SpikeReg[GS]')
+    parser.add_argument('pipeline', type=str, help='pipelines: <6,24>HMPCompCorSpikeReg[GS] AROMASpikeReg[GS]')
     parser.add_argument('--fd_threshold', type=float, default=0.9, help='choose FD threshold for SpikeReg, default 0.9mm')
     parser.add_argument('--smooth_fwhm', type=float, default=6, help='choose smoothing kernel, default fwhm 6mm')
     parser.add_argument('--report_only', action='store_true', help='run group-level summary only')
@@ -36,21 +37,18 @@ def get_data(derivatives):
     layout = BIDSLayout(derivatives + '/fmriprep', validate=False, index_metadata=False)
     preprocsICA = layout.get(space='MNI152NLin6Asym', suffix='bold', extension='.nii.gz')
     preprocs = [file for file in preprocsICA if 'desc-preproc' in file.filename]
+    aromas = [file for file in preprocsICA if 'desc-smoothAROMAnonaggr' in file.filename]
     masks = layout.get(regex_search=True, task='.[1-4]', space='MNI152NLin6Asym', suffix='mask', extension='.nii.gz')
     dfs = layout.get(suffix='timeseries', extension='.tsv')
     jsons = layout.get(suffix='timeseries', extension='.json')
     assert len(preprocs)==len(masks)==len(dfs)==len(jsons), 'missings fmriprep files'
-    return layout, atlas, preprocs, masks, dfs, jsons
+    return layout, atlas, preprocs, aromas, masks, dfs, jsons
 
 def select_components(pipeline, json):
     json = json.filter(regex='a_comp_cor')
-    if 'CompCorCombined' in pipeline: # [Behzadi2007] 
-        comp_cor = json.columns[json.loc['Mask']=='combined'].to_list()
-    elif 'CompCorSeparate' in pipeline: # [Muschelli2014]
-        comp_cor = json.columns[json.loc['Mask']=='CSF'].to_list()[:5]
-        comp_cor.extend(json.columns[json.loc['Mask']=='WM'].to_list()[:5])
-    if 'CompCor' in pipeline:
-        return '|'.join(comp_cor)
+    comp_cor = json.columns[json.loc['Mask']=='CSF'].to_list()[:5]
+    comp_cor.extend(json.columns[json.loc['Mask']=='WM'].to_list()[:5])
+    if 'CompCor' in pipeline: return '|'.join(comp_cor)
 
 def build_path(layout, derivatives, pipeline, sub, task, space):
     pattern = 'sub-{subject}_task-{task}_space-{space}_pipeline-{pipeline}_{suffix}.{extension}'
@@ -104,22 +102,23 @@ def plot_carpet(ax, preproc, preproc_clean, mask):
 
 def main():  
 
-    pipelines = {'6HMPCompCorSeparateSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+',
-                 '6HMPCompCorSeparateSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
-                 '24HMPCompCorSeparateSpikeReg': '[rot,trans]_[xyz]|cosine|motion_outlier[0-9]+',
-                 '6HMPCompCorCombinedSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+', 
-                 '6HMPCompCorCombinedSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
-                 '6HMPWMSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+'}
+    pipelines = {'6HMPCompCorSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+',
+                 '6HMPCompCorSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
+                 '24HMPCompCorSpikeReg': '[rot,trans]_[xyz]|cosine|motion_outlier[0-9]+',
+                 '6HMPWMSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+',
+                 'AROMASpikeReg': 'cosine|motion_outlier[0-9]+',
+                 'AROMASpikeRegGS': 'cosine|motion_outlier[0-9]+'}
 
     args = get_args()
     derivatives = str(args.derivatives)
     pipeline = args.pipeline
+    assert pipelines[pipeline], 'not a valid pipeline'
     fd_threshold = args.fd_threshold
     smooth_fwhm = args.smooth_fwhm
 
     if not args.report_only:
-        layout, atlas, preprocs, masks, dfs, jsons = get_data(derivatives)
-        for mask, df, json, preproc in zip(masks, dfs, jsons, preprocs):
+        layout, atlas, preprocs, aromas, masks, dfs, jsons = get_data(derivatives)
+        for mask, df, json, preproc, aroma in zip(masks, dfs, jsons, preprocs, aromas):
             
             sub, task, space = preproc.entities['subject'], preproc.entities['task'], preproc.entities['space']
             path_confounds, path_plot, path_matrix = build_path(layout, derivatives, pipeline, sub, task, space)
@@ -128,14 +127,22 @@ def main():
             mask = mask.get_image()
             json = pd.read_json(json)
             comp_cor = select_components(pipeline, json)
-        
+
             df = df.get_df().fillna(0)
             df, fd_outliers = get_outliers(df, fd_threshold)
             conf = df.filter(regex=f'{pipelines[pipeline]}|{comp_cor}')
             conf.to_csv(path_confounds, sep='\t', header=True, index=False)
-
+            
             preproc = preproc.get_image()
-            preproc_clean = image.clean_img(preproc, detrend=False, standardize=True, confounds=conf, mask_img=mask)
+            if 'AROMA' in pipeline:
+                aroma = aroma.get_image()
+                if 'GS' in pipeline:
+                    gs_masker = NiftiMasker(mask)
+                    gs = gs_masker.fit_transform(aroma).mean(axis=1)
+                    conf['global_signal'] = gs
+                preproc_clean = image.clean_img(aroma, detrend=False, standardize=True, confounds=conf, mask_img=mask)
+            else:
+                preproc_clean = image.clean_img(preproc, detrend=False, standardize=True, confounds=conf, mask_img=mask)
 
             masker = NiftiLabelsMasker(atlas, mask_img=mask, smoothing_fwhm=smooth_fwhm, 
                                        memory=f'{derivatives}/denoise_cache', memory_level=3)
