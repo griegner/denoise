@@ -3,7 +3,6 @@
 from bids import BIDSLayout
 from pathlib import Path
 import argparse
-from joblib import memory
 import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style('white')
