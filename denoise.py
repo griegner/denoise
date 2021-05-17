@@ -1,82 +1,70 @@
 #!/Users/zeidanlab_pro/anaconda3/envs/neuroimg/bin/python
 
-from bids import BIDSLayout
+import warnings; warnings.filterwarnings('ignore')
+
+from load_confounds import Confounds
+from bids.layout import parse_file_entities
 from pathlib import Path
 import argparse
 import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set_style('white')
+import seaborn as sns; sns.set_style('white')
 import numpy as np
 import pandas as pd
-import nibabel as nib
-from nilearn import plotting
-from nilearn import datasets
-from nilearn import image
+from nilearn import plotting, datasets, image
 from nilearn.input_data import NiftiLabelsMasker
-from nilearn.input_data import NiftiMasker
 from nilearn.connectome import ConnectivityMeasure
-import warnings
-warnings.filterwarnings('ignore')
 
+from strategies import strategies
 import report
 
-def get_args():
+def get_args(strategies):
+    
     parser = argparse.ArgumentParser(description='denoise fMRI data')
-    parser.add_argument('derivatives', type=Path, help='path to derivatives, parent directory of fmriprep')
-    parser.add_argument('pipeline', type=str, help='pipelines: <6,24>HMPCompCorSpikeReg[GS] AROMASpikeReg[GS]')
-    parser.add_argument('--fd_threshold', type=float, default=0.9, help='choose FD threshold for SpikeReg, default 0.9mm')
+    parser.add_argument('fmriprep', type=Path, help='path to fmriprep directory')
+    parser.add_argument('strategy', type=str, help=' - '.join(strategies))
     parser.add_argument('--smooth_fwhm', type=float, default=6, help='choose smoothing kernel, default fwhm 6mm')
     parser.add_argument('--report_only', action='store_true', help='run group-level summary only')
     args = parser.parse_args()
-    assert args.derivatives.is_dir(), 'derivatives directory does not exist'
+    assert args.strategy in strategies, f'{args.strategy} not a valid strategy'
+    assert args.fmriprep.is_dir(), 'fmriprep directory does not exist'
     return args
 
-def get_data(derivatives):
-    atlas = datasets.fetch_atlas_basc_multiscale_2015(version='asym')["scale122"]
-    layout = BIDSLayout(derivatives + '/fmriprep', validate=False, index_metadata=False)
-    preprocsICA = layout.get(space='MNI152NLin6Asym', suffix='bold', extension='.nii.gz')
-    preprocs = [file for file in preprocsICA if 'desc-preproc' in file.filename]
-    aromas = [file for file in preprocsICA if 'desc-smoothAROMAnonaggr' in file.filename]
-    masks = layout.get(regex_search=True, task='.[1-4]', space='MNI152NLin6Asym', suffix='mask', extension='.nii.gz')
-    dfs = layout.get(suffix='timeseries', extension='.tsv')
-    jsons = layout.get(suffix='timeseries', extension='.json')
-    assert len(preprocs)==len(masks)==len(dfs)==len(jsons), 'missings fmriprep files'
-    return layout, atlas, preprocs, aromas, masks, dfs, jsons
+class Data:
 
-def select_components(pipeline, json):
-    json = json.filter(regex='a_comp_cor')
-    comp_cor = json.columns[json.loc['Mask']=='CSF'].to_list()[:5]
-    comp_cor.extend(json.columns[json.loc['Mask']=='WM'].to_list()[:5])
-    if 'CompCor' in pipeline: return '|'.join(comp_cor)
+    def __init__(self, fmriprep, strategy):
+        print('indexing files: ', end='')
+        self.fmriprep = fmriprep
+        self.atlas = datasets.fetch_atlas_basc_multiscale_2015(version='asym')['scale122']
+        self.masks = self.get_masks()
+        self.preprocs = self.get_preprocs()
+        self.confounds = self.get_confounds(strategy)
+        self.motion_dfs = self.get_motion_dfs()
+        assert len(self.masks)==len(self.preprocs)==len(self.confounds)==len(self.motion_dfs), \
+            'missings fmriprep files'
+        print('done')
 
-def build_path(layout, derivatives, pipeline, sub, task, space):
-    pattern = 'sub-{subject}_task-{task}_space-{space}_pipeline-{pipeline}_{suffix}.{extension}'
-    path = Path(f'{derivatives}/denoise/sub-{sub}')
+    def get_masks(self):
+        masks =  self.fmriprep.glob('**/sub-*_task-*_space-MNI152NLin6Asym_res-2_desc-brain_mask.nii.gz')
+        return sorted([str(mask) for mask in masks])
+
+    def get_preprocs(self):
+        preprocs = self.fmriprep.glob('**/sub-*_task-*_space-MNI152NLin6Asym_res-2_desc-preproc_bold.nii.gz')
+        return sorted([str(preproc) for preproc in preprocs])
+
+    def get_confounds(self, strategy):
+        return Confounds(**strategy).load(self.preprocs)
+
+    def get_motion_dfs(self):
+        dfs = sorted(self.fmriprep.glob('**/sub-*_task-*_desc-confounds_timeseries.tsv'))
+        return [pd.read_csv(df, sep='\t', usecols=['framewise_displacement', 'rmsd']) for df in dfs]
+
+def build_path(derivatives, sub, task, space, strategy):
+    path = derivatives / f'denoise/sub-{sub}'
     path.mkdir(parents=True, exist_ok=True)
-    entities = {
-            'subject': sub,
-            'task': task,
-            'space': space,
-            'pipeline': pipeline,
-            'desc': 'denoised',
-            'suffix': 'confounds',
-            'extension': 'tsv'}
-    path_confounds = path / layout.build_path(entities, pattern, validate=False, absolute_paths=False)
-    entities['suffix'] = 'plot'; entities['extension'] = 'png'
-    path_plot = path / layout.build_path(entities, pattern, validate=False, absolute_paths=False)
-    entities['suffix'] = 'connMat'; entities['extension'] = 'npy'
-    path_matrix = path / layout.build_path(entities, pattern, validate=False, absolute_paths=False)
-    return path_confounds, path_plot, path_matrix
-
-def get_outliers(df, fd_threshold):
-    df = df.drop(df.filter(regex='motion_outlier').columns, axis=1)
-    df['motion_outliers_all'] = df.framewise_displacement.gt(fd_threshold)
-    fd_outliers = df.motion_outliers_all.sum() / len(df.index)
-    volumes = df.index[df['motion_outliers_all']].tolist()
-    for idx, outlier in enumerate(volumes):
-        df[f'motion_outlier{idx:02}'] = 0
-        df.at[outlier, f'motion_outlier{idx:02}'] = 1
-    return df, fd_outliers
+    # BIDS patter: sub-{subject}_task-{task}_space-{space}_strat-{strategy}_{suffix}.{extension}
+    path_plot = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_plot.png'
+    path_matrix = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_connMat.npy'
+    return path_plot, path_matrix
 
 def plot_dist(ax, matrix, matrix_clean):
     sns.distplot(matrix.flatten(), color='#B62E33', hist=False, ax=ax)
@@ -88,11 +76,15 @@ def plot_connectome(ax, matrix, matrix_clean, sub, task):
     plotting.plot_matrix(matrix, colorbar=False, tri='full', axes=ax)
     plotting.plot_matrix(matrix_clean, colorbar=False, tri='lower', axes=ax)
 
-def plot_fd(ax, fd, fd_threshold, fd_outliers):
-    ax.set_title(f'FD   mean: {fd.mean():.2}   outliers > {fd_threshold}mm: {fd_outliers:.2%}', loc='left', size='small')
-    ax.axhline(y=fd_threshold, color='r', linestyle=':', lw=.6)
+def plot_fd(ax, fd, fd_thresh):
+    ax.set_title(
+        f'FD   mean: {fd.mean():.2}   outliers > {fd_thresh}mm: {(fd > fd_thresh).sum():.2%}', 
+        loc='left', 
+        size='small'
+        )
+    ax.axhline(y=fd_thresh, color='r', linestyle=':', lw=.6)
     ax.plot(fd, color='k', lw=0.5)
-    outliers = [idx for idx, val in enumerate(fd) if val>fd_threshold]
+    outliers = [idx for idx, val in enumerate(fd) if val>fd_thresh]
     ax.plot(outliers, [0]*len(outliers), color='r', linestyle='none', marker='|')
 
 def plot_carpet(ax, preproc, preproc_clean, mask):
@@ -101,82 +93,57 @@ def plot_carpet(ax, preproc, preproc_clean, mask):
 
 def main():  
 
-    pipelines = {'6HMPCompCorSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+',
-                 '6HMPCompCorSpikeRegGS': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+|global_signal$',
-                 '24HMPCompCorSpikeReg': '[rot,trans]_[xyz]|cosine|motion_outlier[0-9]+',
-                 '6HMPWMSpikeReg': '[rot,trans]_[xyz]$|cosine|motion_outlier[0-9]+',
-                 'AROMASpikeReg': 'cosine|motion_outlier[0-9]+',
-                 'AROMASpikeRegGS': 'cosine|motion_outlier[0-9]+'}
+    args = get_args(strategies.keys())
+    derivatives = args.fmriprep.parent
+    fd_thresh = strategies[args.strategy]['fd_thresh'] 
 
-    args = get_args()
-    derivatives = str(args.derivatives)
-    pipeline = args.pipeline
-    assert pipelines[pipeline], 'not a valid pipeline'
-    fd_threshold = args.fd_threshold
-    smooth_fwhm = args.smooth_fwhm
-
+    data = Data(args.fmriprep, strategies[args.strategy])
+    
     if not args.report_only:
-        layout, atlas, preprocs, aromas, masks, dfs, jsons = get_data(derivatives)
-        for mask, df, json, preproc, aroma in zip(masks, dfs, jsons, preprocs, aromas):
-            
-            sub, task, space = preproc.entities['subject'], preproc.entities['task'], preproc.entities['space']
-            path_confounds, path_plot, path_matrix = build_path(layout, derivatives, pipeline, sub, task, space)
+
+        for mask, preproc, confound, motion_df in zip(data.masks, data.preprocs, data.confounds, data.motion_dfs):
+
+            file_entities = parse_file_entities(preproc)
+            sub, task, space = file_entities['subject'], file_entities['task'], file_entities['space']
+
             print(f'sub-{sub} task-{task}')
+            path_plot, path_matrix = build_path(derivatives, sub, task, space, args.strategy)
 
-            mask = mask.get_image()
-            json = pd.read_json(json)
-            comp_cor = select_components(pipeline, json)
+            mask, preproc = image.load_img(mask), image.load_img(preproc)
+            preproc_clean = image.clean_img(preproc, detrend=False, standardize=False, confounds=confound, mask_img=mask)
 
-            df = df.get_df().fillna(0)
-            df, fd_outliers = get_outliers(df, fd_threshold)
-            conf = df.filter(regex=f'{pipelines[pipeline]}|{comp_cor}')
-            conf.to_csv(path_confounds, sep='\t', header=True, index=False)
-            
-            preproc = preproc.get_image()
-            if 'AROMA' in pipeline:
-                aroma = aroma.get_image()
-                if 'GS' in pipeline:
-                    gs_masker = NiftiMasker(mask)
-                    gs = gs_masker.fit_transform(aroma).mean(axis=1)
-                    conf['global_signal'] = gs
-                preproc_clean = image.clean_img(aroma, detrend=False, standardize=True, confounds=conf, mask_img=mask)
-            else:
-                preproc_clean = image.clean_img(preproc, detrend=False, standardize=True, confounds=conf, mask_img=mask)
-
-            masker = NiftiLabelsMasker(atlas, mask_img=mask, smoothing_fwhm=smooth_fwhm, 
-                                       memory=f'{derivatives}/denoise_cache', memory_level=3)
+            masker = NiftiLabelsMasker(data.atlas, mask_img=mask, smoothing_fwhm=args.smooth_fwhm, 
+                                       memory=str(derivatives / '.denoise_cache'), memory_level=3)
             ts = masker.fit_transform(preproc)
             ts_clean = masker.fit_transform(preproc_clean)
 
             correlation = ConnectivityMeasure(kind='correlation', discard_diagonal=True)
-            matrix = correlation.fit_transform([ts])[0]
-            np.fill_diagonal(matrix, np.nan)
-            matrix_clean = correlation.fit_transform([ts_clean])[0]
-            np.fill_diagonal(matrix_clean, np.nan)
+            matrix = correlation.fit_transform([ts])[0]; np.fill_diagonal(matrix, np.nan)
+            matrix_clean = correlation.fit_transform([ts_clean])[0]; np.fill_diagonal(matrix_clean, np.nan)
             np.save(path_matrix, matrix_clean)
 
             fig, axs = plt.subplots(5, figsize=(4,8), gridspec_kw={'height_ratios': [2, 10, 1, 2, 2]})
             for ax in axs: ax.axis('off'); ax.margins(0,.02)
             plot_dist(axs[0], matrix, matrix_clean)
             plot_connectome(axs[1], matrix, matrix_clean, sub, task)
-            plot_fd(axs[2], df.framewise_displacement, fd_threshold, fd_outliers)
+            plot_fd(axs[2], motion_df.framewise_displacement, fd_thresh)
             plot_carpet(axs[3:], preproc, preproc_clean, mask)
 
             fig.savefig(path_plot, dpi=300, bbox_inches='tight')
             plt.close(fig)
             del fig, axs
 
-    print(f'group-level summary: pipeline-{pipeline}_report.html')
+    print(f'group-level summary: strategy-{args.strategy}_report.html')
     denoise = f'{derivatives}/denoise'
-    npys, plots = report.find_files(denoise, pipeline)
+    npys, plots = report.find_files(denoise, args.strategy)
     fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(axs[0])
-    edges = report.plot_summary_dist(axs[1], npys, pipeline)
-    np.save(f'{denoise}/group/pipeline-{pipeline}_connMat.npy', edges)
+    edges = report.plot_summary_dist(axs[1], npys, args.strategy)
+    np.save(f'{denoise}/group/strategy-{args.strategy}_connMat.npy', edges)
     report.compare(denoise, axs[2])
-    fig.savefig(f'{denoise}/group/pipeline-{pipeline}_plot.png', dpi=300)
-    report.html_report(denoise, pipeline, plots)
+    fig.savefig(f'{denoise}/group/strategy-{args.strategy}_plot.png', dpi=300)
+    report.html_report(denoise, args.strategy, plots)
     plt.close(fig)
     del fig, axs
 
