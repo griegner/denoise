@@ -18,7 +18,6 @@ from strategies import strategies
 import report
 
 def get_args(strategies):
-    
     parser = argparse.ArgumentParser(description='denoise fMRI data')
     parser.add_argument('fmriprep', type=Path, help='path to fmriprep directory')
     parser.add_argument('strategy', type=str, help=' - '.join(strategies))
@@ -30,9 +29,8 @@ def get_args(strategies):
     return args
 
 class Data:
-
     def __init__(self, fmriprep, strategy):
-        print('indexing files: ', end='')
+        print('\nindexing files: ', end='')
         self.fmriprep = fmriprep
         self.atlas = datasets.fetch_atlas_basc_multiscale_2015(version='asym')['scale122']
         self.masks = self.get_masks()
@@ -61,7 +59,7 @@ class Data:
 def build_path(derivatives, sub, task, space, strategy):
     path = derivatives / f'denoise/sub-{sub}'
     path.mkdir(parents=True, exist_ok=True)
-    # BIDS patter: sub-{subject}_task-{task}_space-{space}_strat-{strategy}_{suffix}.{extension}
+    # BIDS pattern: sub-{subject}_task-{task}_space-{space}_strat-{strategy}_{suffix}.{extension}
     path_plot = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_plot.png'
     path_matrix = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_connMat.npy'
     return path_plot, path_matrix
@@ -91,22 +89,38 @@ def plot_carpet(ax, preproc, preproc_clean, mask):
     plotting.plot_carpet(preproc, mask_img=mask, axes=ax[0])
     plotting.plot_carpet(preproc_clean, mask_img=mask, axes=ax[1])
 
+def group_summary(derivatives, strategy):
+    print(f'group-level summary: strategy-{strategy}_report.html')
+    denoise = f'{derivatives}/denoise'
+    npys, plots = report.find_files(denoise, strategy)
+    fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
+    for ax in axs: ax.axis('off'); ax.margins(0,0)
+    report.plot_atlas(axs[0])
+    edges = report.plot_summary_dist(axs[1], npys, strategy)
+    np.save(f'{denoise}/group/strategy-{strategy}_connMat.npy', edges)
+    report.compare(denoise, axs[2])
+    fig.savefig(f'{denoise}/group/strategy-{strategy}_plot.png', dpi=300)
+    report.html_report(denoise, strategy, plots)
+    plt.close(fig)
+    del fig, axs
+
+
 def main():  
 
     args = get_args(strategies.keys())
     derivatives = args.fmriprep.parent
     fd_thresh = strategies[args.strategy]['fd_thresh'] 
-
-    data = Data(args.fmriprep, strategies[args.strategy])
     
     if not args.report_only:
+
+        data = Data(args.fmriprep, strategies[args.strategy])
 
         for mask, preproc, confound, motion_df in zip(data.masks, data.preprocs, data.confounds, data.motion_dfs):
 
             file_entities = parse_file_entities(preproc)
             sub, task, space = file_entities['subject'], file_entities['task'], file_entities['space']
 
-            print(f'sub-{sub} task-{task}')
+            print(f'> sub-{sub} task-{task}')
             path_plot, path_matrix = build_path(derivatives, sub, task, space, args.strategy)
 
             mask, preproc = image.load_img(mask), image.load_img(preproc)
@@ -133,18 +147,6 @@ def main():
             plt.close(fig)
             del fig, axs
 
-    print(f'group-level summary: strategy-{args.strategy}_report.html')
-    denoise = f'{derivatives}/denoise'
-    npys, plots = report.find_files(denoise, args.strategy)
-    fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
-    for ax in axs: ax.axis('off'); ax.margins(0,0)
-    report.plot_atlas(axs[0])
-    edges = report.plot_summary_dist(axs[1], npys, args.strategy)
-    np.save(f'{denoise}/group/strategy-{args.strategy}_connMat.npy', edges)
-    report.compare(denoise, axs[2])
-    fig.savefig(f'{denoise}/group/strategy-{args.strategy}_plot.png', dpi=300)
-    report.html_report(denoise, args.strategy, plots)
-    plt.close(fig)
-    del fig, axs
+    group_summary(derivatives, args.strategy)
 
 if __name__ == '__main__': main()
