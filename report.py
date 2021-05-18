@@ -1,25 +1,22 @@
+import warnings; warnings.filterwarnings('ignore')
+
 from pathlib import Path
 from nilearn import datasets, plotting
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
-sns.set_style('white')
+import seaborn as sns; sns.set_style('white')
 
-import warnings
-warnings.filterwarnings('ignore')
-
-
-def find_files(denoise, pipeline):
+def find_files(denoise, strategy):
     Path(f'{denoise}/group').mkdir(exist_ok=True)
-    npys = sorted(Path(denoise).glob(f'sub-*/*pipeline-{pipeline}_connMat.npy'))
-    plots = sorted(Path(denoise).glob(f'sub-*/*pipeline-{pipeline}_plot.png'))
+    npys = sorted(Path(denoise).glob(f'sub-*/*strat-{strategy}_connMat.npy'))
+    plots = sorted(Path(denoise).glob(f'sub-*/*strat-{strategy}_plot.png'))
+    assert len(npys)==len(plots), 'missing connMat.npy or plot.png files'
     return npys, plots
 
-def plot_atlas(ax):
-    atlas = datasets.fetch_atlas_basc_multiscale_2015(version='asym')["scale122"]
+def plot_atlas(atlas, ax):
     plotting.plot_roi(atlas, display_mode='xz', cut_coords=(0,0), annotate=False, draw_cross=False, axes=ax)
 
-def plot_summary_dist(ax, npys, pipeline):
+def plot_summary_dist(ax, npys, strategy):
 
     edges = []
     means = []
@@ -35,7 +32,7 @@ def plot_summary_dist(ax, npys, pipeline):
     ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
     ax.plot(means, [-0.1]*len(means), color='#3C83BC', linestyle='none', marker='|', markersize=10, alpha=.2)
 
-    ax.text(-0.1, 0.9, pipeline, transform=ax.transAxes, weight='bold')
+    ax.text(-0.1, 0.9, strategy, transform=ax.transAxes, weight='bold')
     ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(means)} functional runs', transform=ax.transAxes)
 
     return edges
@@ -43,16 +40,16 @@ def plot_summary_dist(ax, npys, pipeline):
 def compare(denoise, ax):
     denoise = Path(denoise)
     npys = sorted(denoise.glob('group/*connMat.npy'))
-    pipelines = [pipeline.stem[9:-8] for pipeline in npys]
+    strategies = [strategy.stem[9:-8] for strategy in npys]
 
     cmap = plt.get_cmap('binary')
     means = {}
-    for npy, pipeline in zip(npys, pipelines):
+    for npy, strategy in zip(npys, strategies):
         dist = np.load(npy)
         dist_mean = dist.mean()
-        means[pipeline] = dist_mean
+        means[strategy] = dist_mean
         color = cmap(1-dist_mean)
-        sns.kdeplot(dist, linewidth=0.2, ax=ax, color=color, fill=True, alpha=.3, label=pipeline)
+        sns.kdeplot(dist, linewidth=0.2, ax=ax, color=color, fill=True, alpha=.3, label=strategy)
 
     means = sorted(means.items(), key=lambda x:x[1])
     h, l = ax.get_legend_handles_labels()
@@ -61,13 +58,13 @@ def compare(denoise, ax):
     
     ax.legend(handels, labels, prop={'size': 6}, loc='upper left', bbox_to_anchor=(-0.1,.85))
     ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
-    ax.text(-0.1, 0.9, 'pipelines (min-max)', transform=ax.transAxes)
-    ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(pipelines)} pipelines', transform=ax.transAxes)
+    ax.text(-0.1, 0.9, 'strategies (min-max)', transform=ax.transAxes)
+    ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(strategies)} strategies', transform=ax.transAxes)
    
-def html_report(denoise, pipeline, plots):
+def html_report(denoise, strategy, plots):
 
-    with open(f'{denoise}/group/pipeline-{pipeline}_report.html', 'w') as f_out:
-        print(f"<img src='{denoise}/group/pipeline-{pipeline}_plot.png' style='float: left; width: 100%'>", file=f_out)
+    with open(f'{denoise}/group/strategy-{strategy}_report.html', 'w') as f_out:
+        print(f"<img src='{denoise}/group/strategy-{strategy}_plot.png' style='float: left; width: 100%'>", file=f_out)
         
         for idx, plot in enumerate(plots):
             if idx%4==0: print('<hr>', file=f_out)
