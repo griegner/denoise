@@ -61,10 +61,11 @@ def compare(denoise, ax):
     ax.text(-0.1, 0.9, 'strategies (min-max)', transform=ax.transAxes)
     ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(strategies)} strategies', transform=ax.transAxes)
    
-def html_report(denoise, strategy, plots):
+def html_report(denoise, strategy, confounds, plots):
 
     with open(f'{denoise}/group/strategy-{strategy}_report.html', 'w') as f_out:
-        print(f"<img src='{denoise}/group/strategy-{strategy}_plot.png' style='float: left; width: 100%'>", file=f_out)
+        print(f"<img src='{denoise}/group/strategy-{strategy}_plot.png' style='float: left; width: 100%'>", '<hr>', sep='\n', file=f_out)
+        print(f"<small>{confounds}</small>", file=f_out)
         
         for idx, plot in enumerate(plots):
             if idx%4==0: print('<hr>', file=f_out)
