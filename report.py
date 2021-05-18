@@ -1,9 +1,9 @@
 import warnings; warnings.filterwarnings('ignore')
 
 from pathlib import Path
-from nilearn import datasets, plotting
-import matplotlib.pyplot as plt
 import numpy as np
+from nilearn import plotting
+import matplotlib.pyplot as plt
 import seaborn as sns; sns.set_style('white')
 
 def find_files(denoise, strategy):

@@ -71,10 +71,9 @@ def get_correlations(timeseries, path_vector):
     np.fill_diagonal(matrix[0], np.nan); np.fill_diagonal(matrix[1], np.nan)
     return vector, matrix
 
-
-def plot_dist(ax, matrix):
-    sns.distplot(matrix[0].flatten(), color='#B62E33', hist=False, ax=ax)
-    sns.distplot(matrix[1].flatten(), color='#3C83BC', hist=False, ax=ax)
+def plot_dist(ax, vector):
+    sns.distplot(vector[0], color='#B62E33', hist=False, ax=ax)
+    sns.distplot(vector[1], color='#3C83BC', hist=False, ax=ax)
     ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
 
 def plot_connectome(ax, matrix, sub, task):
@@ -84,7 +83,7 @@ def plot_connectome(ax, matrix, sub, task):
 
 def plot_fd(ax, fd, fd_thresh):
     ax.set_title(
-        f'FD   mean: {fd.mean():.2}   outliers > {fd_thresh}mm: {(fd > fd_thresh).sum() / len(fd):%}', 
+        f'FD   mean: {fd.mean():.2}   outliers > {fd_thresh}mm: {(fd > fd_thresh).sum() / len(fd):.0%}', 
         loc='left', 
         size='small'
         )
@@ -93,9 +92,9 @@ def plot_fd(ax, fd, fd_thresh):
     outliers = [idx for idx, val in enumerate(fd) if val>fd_thresh]
     ax.plot(outliers, [0]*len(outliers), color='r', linestyle='none', marker='|')
 
-def plot_carpet(ax, preproc_noise, preproc_denoise, mask):
-    plotting.plot_carpet(preproc_noise, mask_img=mask, axes=ax[0])
-    plotting.plot_carpet(preproc_denoise, mask_img=mask, axes=ax[1])
+def plot_carpet(ax, preproc, mask):
+    plotting.plot_carpet(preproc[0], mask_img=mask, axes=ax[0])
+    plotting.plot_carpet(preproc[1], mask_img=mask, axes=ax[1])
 
 def group_summary(derivatives, strategy, atlas):
     print(f'group-level summary: strategy-{strategy}_report.html')
@@ -151,10 +150,11 @@ def main():
 
             fig, axs = plt.subplots(5, figsize=(4,8), gridspec_kw={'height_ratios': [2, 10, 1, 2, 2]})
             for ax in axs: ax.axis('off'); ax.margins(0,.02)
-            plot_dist(axs[0], matrix)
+            
+            plot_dist(axs[0], vector)
             plot_connectome(axs[1], matrix, sub, task)
             plot_fd(axs[2], motion_df.framewise_displacement, fd_thresh)
-            plot_carpet(axs[3:], preproc_noise, preproc_denoise, mask)
+            plot_carpet(axs[3:], preproc, mask)
 
             fig.savefig(path_plot, dpi=300, bbox_inches='tight')
             plt.close(fig); del fig, axs
