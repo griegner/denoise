@@ -51,29 +51,40 @@ class Data:
 
     def get_motion_dfs(self):
         dfs = sorted(self.fmriprep.glob('**/sub-*_task-*_desc-confounds_timeseries.tsv'))
-        return [pd.read_csv(df, sep='\t', usecols=['framewise_displacement', 'rmsd']) for df in dfs]
+        return [pd.read_csv(df, sep='\t', usecols=['framewise_displacement', 'std_dvars', 'rmsd']) for df in dfs]
 
 def build_path(derivatives, sub, task, space, strategy):
     path = derivatives / f'denoise/sub-{sub}'
     path.mkdir(parents=True, exist_ok=True)
     # BIDS pattern: sub-{subject}_task-{task}_space-{space}_strat-{strategy}_{suffix}.{extension}
     path_plot = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_plot.png'
-    path_vector = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_noise.npy'
+    path_vector = path / f'sub-{sub}_task-{task}_space-{space}_strat-none_vect.npy'
     return path_plot, path_vector
 
-def get_correlations(timeseries, path_vector):
+def get_timeseries(preproc, atlas, mask, smooth_fwhm, derivatives):
+    masker = NiftiLabelsMasker(
+                atlas, 
+                mask_img=mask, 
+                smoothing_fwhm=smooth_fwhm, 
+                strategy='mean',
+                memory=str(derivatives / '.denoise_cache'), 
+                memory_level=3
+                )
+    return masker.fit_transform(preproc[0]), masker.fit_transform(preproc[1])
+
+def get_correlations(timeseries, path_vector, strategy):
     correlation_vector = ConnectivityMeasure(kind='correlation', vectorize=True, discard_diagonal=True)
     vector = correlation_vector.fit_transform(timeseries)
     np.save(path_vector, vector[0])
-    np.save(str(path_vector).replace('_noise', '_denoise'), vector[1])
+    np.save(str(path_vector).replace('strat-none', f'strat-{strategy}'), vector[1])
     correlation_matrix = ConnectivityMeasure(kind='correlation', vectorize=False)
     matrix = correlation_matrix.fit_transform(timeseries)
     np.fill_diagonal(matrix[0], np.nan); np.fill_diagonal(matrix[1], np.nan)
     return vector, matrix
 
 def plot_dist(ax, vector):
-    sns.distplot(vector[0], color='#B62E33', hist=False, ax=ax)
-    sns.distplot(vector[1], color='#3C83BC', hist=False, ax=ax)
+    sns.kdeplot(vector[0], color='#B62E33', ax=ax)
+    sns.kdeplot(vector[1], color='#3C83BC', ax=ax)
     ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
 
 def plot_connectome(ax, matrix, sub, task):
@@ -81,30 +92,52 @@ def plot_connectome(ax, matrix, sub, task):
     plotting.plot_matrix(matrix[0], colorbar=False, tri='full', axes=ax)
     plotting.plot_matrix(matrix[1], colorbar=False, tri='lower', axes=ax)
 
-def plot_fd(ax, fd, fd_thresh):
-    ax.set_title(
-        f'FD   mean: {fd.mean():.2}   outliers > {fd_thresh}mm: {(fd > fd_thresh).sum() / len(fd):.0%}', 
+def plot_outliers(ax, motion_df, fd_thresh, dvars_thresh):
+    
+    motion_df['fd_outliers'] = motion_df.framewise_displacement.gt(fd_thresh) 
+    motion_df['dvars_outliers'] = motion_df.std_dvars.gt(dvars_thresh)
+    motion_df['outliers'] = motion_df.fd_outliers + motion_df.dvars_outliers
+    outliers = motion_df.index[motion_df.outliers].to_list()
+    rows = motion_df.shape[0]
+
+    ax[0].set_title(
+        f'FD mean={motion_df.framewise_displacement.mean():.2f} \
+        DVARS mean={motion_df.std_dvars.mean():.2f} \
+        outliers={len(outliers)/rows:.2%}', 
         loc='left', 
         size='small'
         )
-    ax.axhline(y=fd_thresh, color='r', linestyle=':', lw=.6)
-    ax.plot(fd, color='k', lw=0.5)
-    outliers = [idx for idx, val in enumerate(fd) if val>fd_thresh]
-    ax.plot(outliers, [0]*len(outliers), color='r', linestyle='none', marker='|')
+
+    ax[0].axhline(y=fd_thresh, color='r', linestyle=':', lw=.6)
+    ax[0].plot(motion_df.framewise_displacement, color='k', lw=0.5)
+
+    ax[1].axhline(y=dvars_thresh, color='r', linestyle=':', lw=.6)
+    ax[1].plot(motion_df.std_dvars, color='k', lw=0.5)
+    ax[1].plot(outliers, [0]*len(outliers), color='r', linestyle='none', marker='|')
 
 def plot_carpet(ax, preproc, mask):
     plotting.plot_carpet(preproc[0], mask_img=mask, axes=ax[0])
     plotting.plot_carpet(preproc[1], mask_img=mask, axes=ax[1])
 
+def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot):
+    fig, axs = plt.subplots(6, figsize=(4,9), gridspec_kw={'height_ratios': [2, 10, 1, 1, 2, 2]})
+    for ax in axs: ax.axis('off'); ax.margins(0,.02)
+    plot_dist(axs[0], vector)
+    plot_connectome(axs[1], matrix, sub, task)
+    plot_outliers(axs[2:4], motion_df, fd_thresh, dvars_thresh)
+    plot_carpet(axs[4:], preproc, mask)
+    fig.savefig(path_plot, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
 def group_summary(derivatives, strategy, atlas):
     print(f'group-level summary: strategy-{strategy}_report.html')
-    denoise = str(derivatives / 'denoise')
-    npys, plots = report.find_files(denoise, strategy)
+    denoise = derivatives / 'denoise'
+    vectors, plots = report.find_files(denoise, strategy)
     fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(atlas, axs[0])
-    edges = report.plot_summary_dist(axs[1], npys, strategy)
-    np.save(f'{denoise}/group/strat-{strategy}_connMat.npy', edges)
+    edges = report.plot_summary_kde(axs[1], vectors, strategy)
+    np.save(denoise/f'group/strat-{strategy}_vect.npy', edges)
     report.compare(denoise, axs[2])
     fig.savefig(f'{denoise}/group/strategy-{strategy}_plot.png', dpi=300)
     report.html_report(denoise, strategy, strategies[strategy], plots)
@@ -117,6 +150,7 @@ def main():
     args = get_args(strategies.keys())
     derivatives = args.fmriprep.parent
     fd_thresh = strategies[args.strategy]['fd_thresh'] 
+    dvars_thresh = strategies[args.strategy]['std_dvars_thresh'] 
     atlas = datasets.fetch_atlas_basc_multiscale_2015(version='asym')['scale122']
     
     if not args.report_only:
@@ -127,7 +161,6 @@ def main():
 
             file_entities = parse_file_entities(preproc)
             sub, task, space = file_entities['subject'], file_entities['task'], file_entities['space']
-
             print(f'> sub-{sub} task-{task}')
             path_plot, path_vector = build_path(derivatives, sub, task, space, args.strategy)
 
@@ -136,28 +169,11 @@ def main():
             preproc_denoise = image.clean_img(preproc, detrend=False, standardize=False, confounds=confound, mask_img=mask)
             preproc = preproc_noise, preproc_denoise
 
-            masker = NiftiLabelsMasker(
-                atlas, 
-                mask_img=mask, 
-                smoothing_fwhm=args.smooth_fwhm, 
-                strategy='mean',
-                memory=str(derivatives / '.denoise_cache'), 
-                memory_level=3
-                ) # is strategy='variance' PCA?
-            timeseries = masker.fit_transform(preproc[0]), masker.fit_transform(preproc[1])
+            timeseries = get_timeseries(preproc, atlas, mask, args.smooth_fwhm, derivatives)
 
-            vector, matrix = get_correlations(timeseries, path_vector)
+            vector, matrix = get_correlations(timeseries, path_vector, args.strategy)
 
-            fig, axs = plt.subplots(5, figsize=(4,8), gridspec_kw={'height_ratios': [2, 10, 1, 2, 2]})
-            for ax in axs: ax.axis('off'); ax.margins(0,.02)
-            
-            plot_dist(axs[0], vector)
-            plot_connectome(axs[1], matrix, sub, task)
-            plot_fd(axs[2], motion_df.framewise_displacement, fd_thresh)
-            plot_carpet(axs[3:], preproc, mask)
-
-            fig.savefig(path_plot, dpi=300, bbox_inches='tight')
-            plt.close(fig); del fig, axs
+            run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot)
 
     group_summary(derivatives, args.strategy, atlas)
 

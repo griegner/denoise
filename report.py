@@ -1,33 +1,29 @@
 import warnings; warnings.filterwarnings('ignore')
 
-from pathlib import Path
 import numpy as np
 from nilearn import plotting
 import matplotlib.pyplot as plt
 import seaborn as sns; sns.set_style('white')
 
 def find_files(denoise, strategy):
-    Path(f'{denoise}/group').mkdir(exist_ok=True)
-    npys = sorted(Path(denoise).glob(f'sub-*/*strat-{strategy}_connMat.npy'))
-    plots = sorted(Path(denoise).glob(f'sub-*/*strat-{strategy}_plot.png'))
-    assert len(npys)==len(plots), 'missing connMat.npy or plot.png files'
-    return npys, plots
+    denoise.joinpath('group').mkdir(exist_ok=True)
+    vectors = sorted(denoise.glob(f'sub-*/*strat-{strategy}_vect.npy'))
+    plots = sorted(denoise.glob(f'sub-*/*strat-{strategy}_plot.png'))
+    assert len(vectors)==len(plots), 'missing vect.npy or plot.png files'
+    return vectors, plots
 
 def plot_atlas(atlas, ax):
     plotting.plot_roi(atlas, display_mode='xz', cut_coords=(0,0), annotate=False, draw_cross=False, axes=ax)
 
-def plot_summary_dist(ax, npys, strategy):
+def plot_summary_dist(ax, vectors, strategy):
 
     edges = []
     means = []
-    for npy in npys:
-        # upper triangle only
-        npy = np.load(npy)
-        npy[np.tril_indices(npy.shape[0], -1)] = np.nan
-        npy = npy[~np.isnan(npy)].flatten()
-        edges.extend(npy)
-        means.append(np.mean(npy))
-        sns.distplot(npy, color='#3C83BC', hist=False, kde_kws=dict(linewidth=.08), ax=ax)
+    for vector in vectors:
+        vector = np.load(vector)
+        edges.extend(vector)
+        means.append(np.mean(vector))
+        sns.kdeplot(vector, color='#3C83BC', linewidth=.08, ax=ax)
 
     ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
     ax.plot(means, [-0.1]*len(means), color='#3C83BC', linestyle='none', marker='|', markersize=10, alpha=.2)
@@ -38,12 +34,11 @@ def plot_summary_dist(ax, npys, strategy):
     return edges
 
 def compare(denoise, ax):
-    denoise = Path(denoise)
-    npys = sorted(denoise.glob('group/*connMat.npy'))
-    strategies = [strategy.stem[9:-8] for strategy in npys]
+    npys = sorted(denoise.glob('group/*vect.npy'))
+    strategies = [strategy.stem[9:-8] for strategy in npys] # needs regex
 
-    cmap = plt.get_cmap('binary')
     means = {}
+    cmap = plt.get_cmap('binary')
     for npy, strategy in zip(npys, strategies):
         dist = np.load(npy)
         dist_mean = dist.mean()

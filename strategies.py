@@ -8,7 +8,7 @@ strategies = {
                          'acompcor_combined': True,
                          'scrub': 'basic', 
                          'fd_thresh': 0.9, 
-                         'std_dvars_thresh': 5},
+                         'std_dvars_thresh': 3.0},
 
     'HMPCompCorScrubGS': {'strategy': ['high_pass', 'motion', 'compcor', 'scrub', 'global'], 
                          'motion': 'basic', 
@@ -17,7 +17,7 @@ strategies = {
                          'acompcor_combined': True, 
                          'scrub': 'basic',
                          'fd_thresh': 0.9, 
-                         'std_dvars_thresh': 5, 
+                         'std_dvars_thresh': 3.0, 
                          'global_signal': 'basic'},               
 
     'HMPWMCSFScrub': {'strategy': ['high_pass', 'motion', 'wm_csf', 'scrub'], 
@@ -25,6 +25,6 @@ strategies = {
                          'wm_csf': 'full',
                          'scrub': 'basic',
                          'fd_thresh': 0.9, 
-                         'std_dvars_thresh': 5}
+                         'std_dvars_thresh': 3.0}
     }
 
