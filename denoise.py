@@ -36,21 +36,21 @@ class Data:
         self.motion_dfs = self.get_motion_dfs()
         assert len(self.masks)==len(self.preprocs)==len(self.confounds)==len(self.motion_dfs), \
             'missings fmriprep files'
-        print('done')
+        print(f'found {len(self.preprocs)} images')
 
     def get_masks(self):
-        masks =  self.fmriprep.glob('**/sub-*_task-*_space-MNI152NLin6Asym_res-2_desc-brain_mask.nii.gz')
+        masks =  self.fmriprep.glob('**/sub-*_task-n*_space-MNI152NLin6Asym_res-2_desc-brain_mask.nii.gz')
         return sorted([str(mask) for mask in masks])
 
     def get_preprocs(self):
-        preprocs = self.fmriprep.glob('**/sub-*_task-*_space-MNI152NLin6Asym_res-2_desc-preproc_bold.nii.gz')
+        preprocs = self.fmriprep.glob('**/sub-*_task-n*_space-MNI152NLin6Asym_res-2_desc-preproc_bold.nii.gz')
         return sorted([str(preproc) for preproc in preprocs])
 
     def get_confounds(self, strategy):
         return Confounds(**strategy).load(self.preprocs)
 
     def get_motion_dfs(self):
-        dfs = sorted(self.fmriprep.glob('**/sub-*_task-*_desc-confounds_timeseries.tsv'))
+        dfs = sorted(self.fmriprep.glob('**/sub-*_task-n*_desc-confounds_timeseries.tsv'))
         return [pd.read_csv(df, sep='\t', usecols=['framewise_displacement', 'std_dvars', 'rmsd']) for df in dfs]
 
 def build_path(derivatives, sub, task, space, strategy):
@@ -138,12 +138,11 @@ def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, p
 def group_summary(derivatives, strategy, atlas):
     print(f'group-level summary: strategy-{strategy}_report.html')
     denoise = derivatives / 'denoise'
-    vectors, plots = report.find_files(denoise, strategy)
+    vectors_noise, vectors_denoise, plots = report.find_files(denoise, strategy)
     fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(atlas, axs[0])
-    edges = report.plot_summary_kde(axs[1], vectors, strategy)
-    np.save(denoise/f'group/strat-{strategy}_vect.npy', edges)
+    report.plot_summary_dist(axs[1], vectors_noise, vectors_denoise, denoise, strategy)
     report.compare(denoise, axs[2])
     fig.savefig(f'{denoise}/group/strategy-{strategy}_plot.png', dpi=300)
     report.html_report(denoise, strategy, strategies[strategy], plots)
