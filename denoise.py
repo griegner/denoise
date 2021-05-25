@@ -58,7 +58,7 @@ def build_path(derivatives, sub, task, space, strategy):
     path.mkdir(parents=True, exist_ok=True)
     # BIDS pattern: sub-{subject}_task-{task}_space-{space}_strat-{strategy}_{suffix}.{extension}
     path_plot = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_plot.png'
-    path_vector = path / f'sub-{sub}_task-{task}_space-{space}_strat-none_vect.npy'
+    path_vector = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_vect.npy'
     return path_plot, path_vector
 
 def get_timeseries(preproc, atlas, mask, smooth_fwhm, derivatives):
@@ -75,8 +75,8 @@ def get_timeseries(preproc, atlas, mask, smooth_fwhm, derivatives):
 def get_correlations(timeseries, path_vector, strategy):
     correlation_vector = ConnectivityMeasure(kind='correlation', vectorize=True, discard_diagonal=True)
     vector = correlation_vector.fit_transform(timeseries)
-    np.save(path_vector, vector[0])
-    np.save(str(path_vector).replace('strat-none', f'strat-{strategy}'), vector[1])
+    np.save(path_vector, vector[1]) # denoise
+    np.save(str(path_vector).replace(f'strat-{strategy}', 'strat-none'), vector[0]) # noise
     correlation_matrix = ConnectivityMeasure(kind='correlation', vectorize=False)
     matrix = correlation_matrix.fit_transform(timeseries)
     np.fill_diagonal(matrix[0], np.nan); np.fill_diagonal(matrix[1], np.nan)
@@ -99,11 +99,12 @@ def plot_outliers(ax, motion_df, fd_thresh, dvars_thresh):
     motion_df['outliers'] = motion_df.fd_outliers + motion_df.dvars_outliers
     outliers = motion_df.index[motion_df.outliers].to_list()
     rows = motion_df.shape[0]
-
+    p_outliers = len(outliers)/rows
+    
     ax[0].set_title(
         f'FD mean={motion_df.framewise_displacement.mean():.2f} \
         DVARS mean={motion_df.std_dvars.mean():.2f} \
-        outliers={len(outliers)/rows:.2%}', 
+        outliers={p_outliers:.2%}', 
         loc='left', 
         size='small'
         )
@@ -115,17 +116,22 @@ def plot_outliers(ax, motion_df, fd_thresh, dvars_thresh):
     ax[1].plot(motion_df.std_dvars, color='k', lw=0.5)
     ax[1].plot(outliers, [0]*len(outliers), color='r', linestyle='none', marker='|')
 
+    return p_outliers>0.1 or motion_df.framewise_displacement.mean()>0.5 # exclusion criteria
+
 def plot_carpet(ax, preproc, mask):
     plotting.plot_carpet(preproc[0], mask_img=mask, axes=ax[0])
     plotting.plot_carpet(preproc[1], mask_img=mask, axes=ax[1])
 
-def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot):
+def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot, path_vector):
     fig, axs = plt.subplots(6, figsize=(4,9), gridspec_kw={'height_ratios': [2, 10, 1, 1, 2, 2]})
     for ax in axs: ax.axis('off'); ax.margins(0,.02)
     plot_dist(axs[0], vector)
     plot_connectome(axs[1], matrix, sub, task)
-    plot_outliers(axs[2:4], motion_df, fd_thresh, dvars_thresh)
+    exclude = plot_outliers(axs[2:4], motion_df, fd_thresh, dvars_thresh)
     plot_carpet(axs[4:], preproc, mask)
+    if exclude: 
+        axs[0].set_title('exclude', color='r', fontweight='bold', loc='left')
+        path_vector.unlink()
     fig.savefig(path_plot, dpi=300, bbox_inches='tight')
     plt.close(fig)
 
@@ -173,7 +179,8 @@ def main():
 
             vector, matrix = get_correlations(timeseries, path_vector, args.strategy)
 
-            run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot)
+            run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot, path_vector)
+
 
     group_summary(derivatives, args.strategy, atlas)
 
