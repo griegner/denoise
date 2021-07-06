@@ -1,4 +1,4 @@
-#!/Users/zeidanlab_pro/anaconda3/envs/neuroimg/bin/python
+#!/Users/zeidanlab/miniconda3/envs/neuroimg/bin/python
 
 from strategies import strategies
 import report

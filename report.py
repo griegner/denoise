@@ -38,7 +38,6 @@ def plot_summary_dist(ax, vectors_noise, vectors_denoise, denoise, strategy):
     ax.text(-0.1, 0.9, strategy, transform=ax.transAxes, weight='bold')
     ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(means)} functional runs', transform=ax.transAxes)
 
-
 def compare(denoise, ax):
     npys = sorted(denoise.glob('group/*vect.npy'))
     strategies = [re.search('strat-(.*)_', npy.stem).group(1) for npy in npys]
