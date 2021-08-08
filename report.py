@@ -6,6 +6,8 @@ import pandas as pd
 from nilearn import plotting
 import matplotlib.pyplot as plt
 import seaborn as sns; sns.set_style('white')
+from scipy import stats
+from statsmodels.stats.multitest import fdrcorrection
 
 def find_files(denoise, strategy):
     denoise.joinpath('group').mkdir(exist_ok=True)
@@ -45,9 +47,22 @@ def plot_summary_dist(ax, vectors_noise, vectors_denoise, denoise, strategy):
     ax.text(-0.1, 0.9, strategy, transform=ax.transAxes, weight='bold')
     ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(means)} functional runs', transform=ax.transAxes)
 
-def compare(denoise, ax):
+def qc_fc(qc, npys, strategies):
+
+    qc_fc = {}
+    for npy, strategy in zip(npys, strategies):
+        fc = np.load(npy).reshape(len(qc), -1)
+        pvals_unc = [stats.pearsonr(qc, fc_col)[1] for fc_col in fc.T]
+        pvals_corr = fdrcorrection(pvals_unc, alpha=.05)[0]
+        qc_fc[strategy] = pvals_corr.sum() / len(pvals_corr)
+
+    return qc_fc
+
+def compare(denoise, qc_means, ax):
     npys = sorted(denoise.glob('group/*vect.npy'))
     strategies = [re.search('strat-(.*)_', npy.stem).group(1) for npy in npys]
+
+    qc_fc(qc_means, npys, strategies)
 
     means = {}
     cmap = plt.get_cmap('binary')

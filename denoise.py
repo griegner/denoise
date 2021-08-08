@@ -146,7 +146,7 @@ def group_summary(derivatives, strategy, atlas):
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(atlas, axs[0])
     report.plot_summary_dist(axs[1], vectors_noise, vectors_denoise, denoise, strategy)
-    report.compare(denoise, axs[2])
+    report.compare(denoise, qc_means['rmsd'], axs[2])
     fig.savefig(f'{denoise}/group/strategy-{strategy}_plot.png', dpi=300)
     report.html_report(denoise, strategy, strategies[strategy], plots)
     plt.close(fig)
