@@ -2,16 +2,23 @@ import warnings; warnings.filterwarnings('ignore')
 
 import re
 import numpy as np
+import pandas as pd
 from nilearn import plotting
 import matplotlib.pyplot as plt
 import seaborn as sns; sns.set_style('white')
 
 def find_files(denoise, strategy):
     denoise.joinpath('group').mkdir(exist_ok=True)
+    qcs = sorted(denoise.glob(f'sub-*/*_qc.tsv'))
     vectors_noise = sorted(denoise.glob(f'sub-*/*strat-none_vect.npy'))
     vectors_denoise = sorted(denoise.glob(f'sub-*/*strat-{strategy}_vect.npy'))
     plots = sorted(denoise.glob(f'sub-*/*strat-{strategy}_plot.png'))
-    return vectors_noise, vectors_denoise, plots
+    return qcs, vectors_noise, vectors_denoise, plots
+
+def qc_means(qcs):
+    columns = pd.read_csv(qcs[0], sep='\t').columns
+    qc_means = [pd.read_csv(qc, sep='\t').mean(axis=0).to_list() for qc in qcs]
+    return pd.DataFrame(qc_means, columns=columns)
 
 def plot_atlas(atlas, ax):
     plotting.plot_roi(atlas, display_mode='xz', cut_coords=(0,0), annotate=False, draw_cross=False, axes=ax)

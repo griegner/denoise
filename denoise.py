@@ -53,13 +53,15 @@ class Data:
         dfs = sorted(self.fmriprep.glob('**/sub-*_task-n*_desc-confounds_timeseries.tsv'))
         return [pd.read_csv(df, sep='\t', usecols=['framewise_displacement', 'std_dvars', 'rmsd']) for df in dfs]
 
-def build_path(derivatives, sub, task, space, strategy):
+def build_path(derivatives, sub, task, strategy):
     path = derivatives / f'denoise/sub-{sub}'
     path.mkdir(parents=True, exist_ok=True)
-    # BIDS pattern: sub-{subject}_task-{task}_space-{space}_strat-{strategy}_{suffix}.{extension}
-    path_plot = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_plot.png'
-    path_vector = path / f'sub-{sub}_task-{task}_space-{space}_strat-{strategy}_vect.npy'
-    return path_plot, path_vector
+    # BIDS pattern: sub-{subject}_task-{task}_strat-{strategy}_{suffix}.{extension}
+    path_plot = path / f'sub-{sub}_task-{task}_strat-{strategy}_plot.png'
+    path_none = path / f'sub-{sub}_task-{task}_strat-none_vect.npy'
+    path_vector = path / f'sub-{sub}_task-{task}_strat-{strategy}_vect.npy'
+    path_qc = path / f'sub-{sub}_task-{task}_qc.tsv'
+    return path_plot, path_none, path_vector, path_qc
 
 def get_timeseries(preproc, atlas, mask, smooth_fwhm, derivatives):
     masker = NiftiLabelsMasker(
@@ -72,11 +74,11 @@ def get_timeseries(preproc, atlas, mask, smooth_fwhm, derivatives):
                 )
     return masker.fit_transform(preproc[0]), masker.fit_transform(preproc[1])
 
-def get_correlations(timeseries, path_vector, strategy):
+def get_correlations(timeseries, path_none, path_vector, strategy):
     correlation_vector = ConnectivityMeasure(kind='correlation', vectorize=True, discard_diagonal=True)
     vector = correlation_vector.fit_transform(timeseries)
+    np.save(path_none, vector[0]) # noise
     np.save(path_vector, vector[1]) # denoise
-    np.save(str(path_vector).replace(f'strat-{strategy}', 'strat-none'), vector[0]) # noise
     correlation_matrix = ConnectivityMeasure(kind='correlation', vectorize=False)
     matrix = correlation_matrix.fit_transform(timeseries)
     np.fill_diagonal(matrix[0], np.nan); np.fill_diagonal(matrix[1], np.nan)
@@ -122,7 +124,7 @@ def plot_carpet(ax, preproc, mask):
     plotting.plot_carpet(preproc[0], mask_img=mask, axes=ax[0])
     plotting.plot_carpet(preproc[1], mask_img=mask, axes=ax[1])
 
-def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot, path_vector):
+def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, paths):
     fig, axs = plt.subplots(6, figsize=(4,9), gridspec_kw={'height_ratios': [2, 10, 1, 1, 2, 2]})
     for ax in axs: ax.axis('off'); ax.margins(0,.02)
     plot_dist(axs[0], vector)
@@ -131,14 +133,15 @@ def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, p
     plot_carpet(axs[4:], preproc, mask)
     if exclude: 
         axs[0].set_title('exclude', color='r', fontweight='bold', loc='left')
-        path_vector.unlink()
-    fig.savefig(path_plot, dpi=300, bbox_inches='tight')
+        [path.unlink() for path in paths[1:]]
+    fig.savefig(paths[0], dpi=300, bbox_inches='tight')
     plt.close(fig)
 
 def group_summary(derivatives, strategy, atlas):
     print(f'group-level summary: strategy-{strategy}_report.html')
     denoise = derivatives / 'denoise'
-    vectors_noise, vectors_denoise, plots = report.find_files(denoise, strategy)
+    qcs, vectors_noise, vectors_denoise, plots = report.find_files(denoise, strategy)
+    qc_means = report.qc_means(qcs)
     fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(atlas, axs[0])
@@ -165,9 +168,10 @@ def main():
         for mask, preproc, confound, motion_df in zip(data.masks, data.preprocs, data.confounds, data.motion_dfs):
 
             file_entities = parse_file_entities(preproc)
-            sub, task, space = file_entities['subject'], file_entities['task'], file_entities['space']
+            sub, task= file_entities['subject'], file_entities['task']
             print(f'> sub-{sub} task-{task}')
-            path_plot, path_vector = build_path(derivatives, sub, task, space, args.strategy)
+            path_plot, path_none, path_vector, path_qc = build_path(derivatives, sub, task, args.strategy)
+            motion_df.to_csv(path_qc, sep='\t', index=False)
 
             mask, preproc_noise = image.load_img(mask), image.load_img(preproc)
             assert mask.shape == preproc_noise.shape[:-1], 'mask and preproc images have different shapes'
@@ -176,9 +180,9 @@ def main():
 
             timeseries = get_timeseries(preproc, atlas, mask, args.smooth_fwhm, derivatives)
 
-            vector, matrix = get_correlations(timeseries, path_vector, args.strategy)
+            vector, matrix = get_correlations(timeseries, path_none, path_vector, args.strategy)
 
-            run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, path_plot, path_vector)
+            run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, preproc, mask, (path_plot, path_none, path_vector, path_qc))
 
 
     group_summary(derivatives, args.strategy, atlas)
