@@ -25,6 +25,14 @@ strategies = {
                          'wm_csf': 'full',
                          'scrub': 'basic',
                          'fd_thresh': 0.9, 
-                         'std_dvars_thresh': 3.0}
+                         'std_dvars_thresh': 3.0},
+
+    'HMPWMCSFScrubGS': {'strategy': ['high_pass', 'motion', 'wm_csf', 'scrub', 'global'], 
+                         'motion': 'basic', 
+                         'wm_csf': 'full',
+                         'scrub': 'basic',
+                         'fd_thresh': 0.9, 
+                         'std_dvars_thresh': 3.0,
+                         'global_signal': 'basic'}
     }
 

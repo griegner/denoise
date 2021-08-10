@@ -23,7 +23,7 @@ def qc_means(qcs):
     return pd.DataFrame(qc_means, columns=columns)
 
 def plot_atlas(atlas, ax):
-    plotting.plot_roi(atlas, display_mode='xz', cut_coords=(0,0), annotate=False, draw_cross=False, axes=ax)
+    plotting.plot_roi(atlas, display_mode='xz', cut_coords=(0,0) , annotate=False, draw_cross=False, axes=ax)
 
 def plot_summary_dist(ax, vectors_noise, vectors_denoise, denoise, strategy):
 
@@ -49,21 +49,20 @@ def plot_summary_dist(ax, vectors_noise, vectors_denoise, denoise, strategy):
 
 def qc_fc(qc, npys, strategies):
 
-    qc_fc = {}
+    qc_fc_ = {}
     for npy, strategy in zip(npys, strategies):
         fc = np.load(npy).reshape(len(qc), -1)
         pvals_unc = [stats.pearsonr(qc, fc_col)[1] for fc_col in fc.T]
         pvals_corr = fdrcorrection(pvals_unc, alpha=.05)[0]
-        qc_fc[strategy] = pvals_corr.sum() / len(pvals_corr)
+        qc_fc_[strategy] = (pvals_corr.sum() / len(pvals_corr)) * 100
 
-    return qc_fc
+    return pd.Series(qc_fc_)
 
 def compare(denoise, qc_means, ax):
     npys = sorted(denoise.glob('group/*vect.npy'))
     strategies = [re.search('strat-(.*)_', npy.stem).group(1) for npy in npys]
 
-    qc_fc(qc_means, npys, strategies)
-
+    # axis 0
     means = {}
     cmap = plt.get_cmap('binary')
     for npy, strategy in zip(npys, strategies):
@@ -72,22 +71,36 @@ def compare(denoise, qc_means, ax):
         means[strategy] = dist_mean
         color = cmap(1-dist_mean)
         if strategy == 'none': color='#B62E33'
-        sns.kdeplot(dist, linewidth=0.2, ax=ax, color=color, fill=True, alpha=.2, label=strategy)
+        sns.kdeplot(dist, linewidth=0.2, ax=ax[0], color=color, fill=True, alpha=.2, label=strategy)
 
     means = sorted(means.items(), key=lambda x:x[1])
-    h, l = ax.get_legend_handles_labels()
+    h, l = ax[0].get_legend_handles_labels()
     handels = [h[l.index(mean[0])] for mean in means]
-    labels = [mean[0] for mean in means]
+    labels = [f'{idx+1}. {mean[0]}' for idx, mean in enumerate(means)]
     
-    ax.legend(handels, labels, prop={'size': 6}, loc='upper left', bbox_to_anchor=(-0.1,.85))
-    ax.axvline(x=0, c='k', alpha=.3, linestyle='dashed')
-    ax.text(-0.1, 0.9, 'strategies (sorted by mean)', transform=ax.transAxes)
-    ax.text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(strategies)} strategies', transform=ax.transAxes)
+    ax[0].legend(handels, labels, prop={'size': 6}, loc='upper left', bbox_to_anchor=(-0.1,.85))
+    ax[0].axvline(x=0, c='k', alpha=.3, linestyle='dashed')
+    ax[0].text(-0.1, 0.9, 'strategies (sorted by mean)', transform=ax[0].transAxes)
+    ax[0].text(-0.1, -0.1, f'distribution of connectivity values (r) across {len(strategies)} strategies', transform=ax[0].transAxes)
+
+    # axis 1
+    qc_fc_ = qc_fc(qc_means, npys, strategies).sort_values(ascending=False)
+    colors = ['#B62E33' if strat == 'none' else 'k' for strat in qc_fc_.index]
+    qc_fc_.plot(kind='barh', color=colors, alpha=.2, ax=ax[1])
+    sns.despine(ax=ax[1], left=True, bottom=True)
+    ax[1].bar_label(ax[1].containers[0], fontsize=6, fmt='   %d%%')
+
+    order = qc_fc_.index
+    for idx, strat in enumerate(order):
+        ax[1].text(0.5, idx, f'{len(order)-idx}. {strat}', fontsize=6, ha='left', va='center')
+
+    ax[1].text(-0.1, -0.1, f'qc-fc: % of edges correlated with RMS motion (q < .05)', transform=ax[1].transAxes)
+
    
 def html_report(denoise, strategy, confounds, plots):
 
-    with open(f'{denoise}/group/strategy-{strategy}_report.html', 'w') as f_out:
-        print(f"<img src='{denoise}/group/strategy-{strategy}_plot.png' style='float: left; width: 100%'>", '<hr>', sep='\n', file=f_out)
+    with open(f'{denoise}/group/strat-{strategy}_report.html', 'w') as f_out:
+        print(f"<img src='{denoise}/group/strat-{strategy}_plot.png' style='float: left; width: 100%'>", '<hr>', sep='\n', file=f_out)
         print(f"<small>{confounds}</small>", file=f_out)
         
         for idx, plot in enumerate(plots):

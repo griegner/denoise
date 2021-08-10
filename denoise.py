@@ -138,16 +138,16 @@ def run_summary(vector, matrix, sub, task, motion_df, fd_thresh, dvars_thresh, p
     plt.close(fig)
 
 def group_summary(derivatives, strategy, atlas):
-    print(f'group-level summary: strategy-{strategy}_report.html')
+    print(f'group-level summary: strat-{strategy}_report.html')
     denoise = derivatives / 'denoise'
     qcs, vectors_noise, vectors_denoise, plots = report.find_files(denoise, strategy)
     qc_means = report.qc_means(qcs)
-    fig, axs = plt.subplots(ncols=3, figsize=(16,2), gridspec_kw={'width_ratios': [2,2,2]})
+    fig, axs = plt.subplots(ncols=4, figsize=(20,2), gridspec_kw={'width_ratios': [1,2,2,2]})
     for ax in axs: ax.axis('off'); ax.margins(0,0)
     report.plot_atlas(atlas, axs[0])
     report.plot_summary_dist(axs[1], vectors_noise, vectors_denoise, denoise, strategy)
-    report.compare(denoise, qc_means['rmsd'], axs[2])
-    fig.savefig(f'{denoise}/group/strategy-{strategy}_plot.png', dpi=300)
+    report.compare(denoise, qc_means['rmsd'], axs[2:])
+    fig.savefig(f'{denoise}/group/strat-{strategy}_plot.png', dpi=300)
     report.html_report(denoise, strategy, strategies[strategy], plots)
     plt.close(fig)
     del fig, axs
