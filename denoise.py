@@ -1,4 +1,3 @@
-#!/Users/zeidanlab/miniconda3/envs/neuroimg/bin/python
 
 from strategies import strategies
 import report
