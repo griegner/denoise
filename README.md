@@ -1,7 +1,7 @@
 ## denoise
 > compare different confound regression strategies on measures of functional connectivity (FC) and quality control (QC)
  
-![](ex_fig.png)
+![](ex-fig.png)
 
 **to run**: `$ python denoise.py --help`  
 
